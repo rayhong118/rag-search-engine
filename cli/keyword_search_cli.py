@@ -1,5 +1,6 @@
 import argparse
 import json
+import string
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
@@ -26,8 +27,11 @@ def keywordSearch(keyword):
 
     results = []
 
+    # translation table to remove punctuation
+    transTable = str.maketrans('', '', string.punctuation)
+
     for movie in movies:
-        title = movie["title"]
+        title = movie["title"].translate(transTable)
         if keyword.lower() in title.lower():
             results.append(movie)
             if len(results) == 5:
