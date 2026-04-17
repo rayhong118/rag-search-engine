@@ -6,6 +6,7 @@ import string
 import io
 from nltk.stem import PorterStemmer
 import pickle
+from collections import defaultdict, Counter
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
@@ -15,6 +16,10 @@ def main() -> None:
     search_parser.add_argument("query", type=str, help="Search query")
 
     build_parser = subparsers.add_parser("build", help="Build and save the inverted index")
+    
+    term_frequencies_parser = subparsers.add_parser("tf", help="Term frequency")
+    term_frequencies_parser.add_argument("documentID", type=int, help="Document ID")
+    term_frequencies_parser.add_argument("term", type=str, help="Term")
 
     args = parser.parse_args()
 
@@ -33,6 +38,14 @@ def main() -> None:
         case "build":
             invertedIndex.build()
             pass
+        case "tf":
+            try:
+                invertedIndex.load()
+                count = invertedIndex.get_tf(args.documentID, args.term)
+                print(f"Frequency of '{args.term}' in document {args.documentID}: {count}")
+            except Exception as e:
+                print(e)
+                sys.exit(1)
         case _:
             parser.print_help()
 
@@ -86,6 +99,8 @@ class InvertedIndex:
         # dictionary mapping document IDs to their full document objects
         self.docmap = dict()
 
+        self.term_frequencies = defaultdict(Counter)
+
     # Tokenize the input text, then add each token to the index with the document ID
     def  __add_document(self, doc_id, text):
         tokenizedText = tokenizeStrings(text)
@@ -94,6 +109,8 @@ class InvertedIndex:
                 self.index[token] = {doc_id}
             else:
                 self.index[token].add(doc_id)
+            
+            self.term_frequencies[doc_id][token] += 1
 
     def get_documents(self, term):
         result_set = set()
@@ -102,6 +119,13 @@ class InvertedIndex:
             doc_ids = self.index.get(token, set())
             result_set.update(doc_ids)
         return sorted(list(result_set))
+
+    def get_tf(self, doc_id, term):
+        tokens = tokenizeStrings(term)
+        if not tokens:
+            return 0
+        token = tokens[0]
+        return self.term_frequencies.get(doc_id, {}).get(token, 0)
 
     def build(self):
         with open('./data/movies.json', 'r') as f:
@@ -121,13 +145,17 @@ class InvertedIndex:
             pickle.dump(self.index, f)
         with open("cache/docmap.pkl", "wb") as f:
             pickle.dump(self.docmap, f)
-
+        with open("cache/term_frequencies.pkl", "wb") as f:
+            pickle.dump(self.term_frequencies, f)
+            
     def load(self):
         try:
             with open("cache/index.pkl", "rb") as f:
                 self.index = pickle.load(f)
             with open("cache/docmap.pkl", "rb") as f:
                 self.docmap = pickle.load(f)
+            with open("cache/term_frequencies.pkl", "rb") as f:
+                self.term_frequencies = pickle.load(f)
         except FileNotFoundError:
             raise Exception("Search index not found. Please run the 'build' command first.")
 
