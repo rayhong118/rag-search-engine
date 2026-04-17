@@ -1,4 +1,5 @@
 import argparse
+import sys
 import os
 import json
 import string
@@ -22,47 +23,35 @@ def main() -> None:
     match args.command:
         case "search":
             print(f'Searching for: {args.query}')
-            keywordSearch(args.query)
+            try:
+                invertedIndex.load()
+            except Exception as e:
+                print(e)
+                sys.exit(1)
+            keywordSearch(args.query, invertedIndex)
             pass
         case "build":
             invertedIndex.build()
-            docs = invertedIndex.get_documents("merida")
-            print(f"First document for token 'merida' = {docs[0]}")
             pass
         case _:
             parser.print_help()
 
-def keywordSearch(query): 
-    with open('./data/movies.json', 'r') as f:
-        dictionary = json.load(f)
-
-    movies = dictionary["movies"]
-
+def keywordSearch(query, index): 
+    
     results = []
 
-    tokenizedQuery = tokenizeStrings(query)
+    movie_ids = index.get_documents(query)[:5]
+    # print(movie_ids)
 
-    print(tokenizedQuery)
+    for movie_id in movie_ids:
+        movie_data = index.docmap[movie_id]
+        results.append(movie_data)
+        print(f'{movie_data["title"]} {movie_data["id"]}')
 
-    # translation table to remove punctuation
-    transTable = str.maketrans('', '', string.punctuation)
-
-    for movie in movies:
-
-        title = movie["title"].translate(transTable)
-        tokenizedTitle = tokenizeStrings(title)
-
-        for query_word in tokenizedQuery:
-            if any(query_word in title_word for title_word in tokenizedTitle):
-                results.append(movie)
-                break
-
-
-    for i, result in enumerate(results):
-        print(f'{i+1}. {result["title"]}')
-    
-    pass
-
+# remove stopwords
+# stemming
+# remove punctuation
+# convert into tokens
 def tokenizeStrings (input):
     result = []
 
@@ -71,6 +60,11 @@ def tokenizeStrings (input):
 
     # stemming
     stemmer = PorterStemmer()
+
+    # translation table to remove punctuation
+    transTable = str.maketrans('', '', string.punctuation)
+
+    input = input.translate(transTable)
 
     inputList = input.lower().split(" ")
     for inputWord in inputList:
@@ -83,9 +77,7 @@ def getStopWords():
     with open('./data/stopwords.txt', 'r') as f:
         content = f.read()
         return content.splitlines()
-        
-
-
+    
 
 class InvertedIndex:
     def __init__(self):
@@ -102,11 +94,11 @@ class InvertedIndex:
                 self.index[token] = {doc_id}
             else:
                 self.index[token].add(doc_id)
-        
 
     def get_documents(self, term):
         result_set = set()
         for token in tokenizeStrings(term):
+            print(f"token: {token}")
             doc_ids = self.index.get(token, set())
             result_set.update(doc_ids)
         return sorted(list(result_set))
@@ -129,6 +121,15 @@ class InvertedIndex:
             pickle.dump(self.index, f)
         with open("cache/docmap.pkl", "wb") as f:
             pickle.dump(self.docmap, f)
+
+    def load(self):
+        try:
+            with open("cache/index.pkl", "rb") as f:
+                self.index = pickle.load(f)
+            with open("cache/docmap.pkl", "rb") as f:
+                self.docmap = pickle.load(f)
+        except FileNotFoundError:
+            raise Exception("Search index not found. Please run the 'build' command first.")
 
 if __name__ == "__main__":
     main()
