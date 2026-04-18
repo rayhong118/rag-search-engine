@@ -7,6 +7,7 @@ import io
 from nltk.stem import PorterStemmer
 import pickle
 from collections import defaultdict, Counter
+import math
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
@@ -20,6 +21,13 @@ def main() -> None:
     term_frequencies_parser = subparsers.add_parser("tf", help="Term frequency")
     term_frequencies_parser.add_argument("documentID", type=int, help="Document ID")
     term_frequencies_parser.add_argument("term", type=str, help="Term")
+
+    idf_parser = subparsers.add_parser('idf')
+    idf_parser.add_argument("term", type=str)
+
+    tfidf_parser = subparsers.add_parser('tfidf')
+    tfidf_parser.add_argument("doc_id", type=int)
+    tfidf_parser.add_argument("term", type=str)
 
     args = parser.parse_args()
 
@@ -46,6 +54,19 @@ def main() -> None:
             except Exception as e:
                 print(e)
                 sys.exit(1)
+        case "idf":
+            invertedIndex.load()
+            idf = calculateIDF(invertedIndex.get_documents(args.term), invertedIndex.docmap)
+            print(f"Inverse document frequency of '{args.term}': {idf:.2f}")
+            pass
+        case "tfidf":
+            invertedIndex.load()
+            tf = invertedIndex.get_tf(args.doc_id, args.term)
+            idf = calculateIDF(invertedIndex.get_documents(args.term), invertedIndex.docmap)
+            tf_idf = tf * idf
+            print(f"TF-IDF score of '{args.term}' in document '{args.doc_id}': {tf_idf:.2f}")
+            pass
+
         case _:
             parser.print_help()
 
@@ -79,7 +100,7 @@ def tokenizeStrings (input):
 
     input = input.translate(transTable)
 
-    inputList = input.lower().split(" ")
+    inputList = input.lower().split()
     for inputWord in inputList:
         if inputWord != "" and inputWord not in stopwords:
             result.append(stemmer.stem(inputWord))
@@ -90,19 +111,25 @@ def getStopWords():
     with open('./data/stopwords.txt', 'r') as f:
         content = f.read()
         return content.splitlines()
-    
 
+def calculateIDF(doc_ids, docmap):
+    total_doc_count = len(docmap)
+    term_match_doc_count = len(doc_ids)
+    print(f'total_doc_count: {total_doc_count}, term_match_doc_count: {term_match_doc_count}')
+    return math.log((total_doc_count + 1) / (term_match_doc_count + 1))
+    
 class InvertedIndex:
     def __init__(self):
-        # dictionary mapping tokens (strings) to sets of document IDs (integers)
+        """Initializes the inverted index, document mapping, and term frequency storage."""
+        # mapping tokens (strings) to sets of document IDs (integers)
         self.index = dict()
-        # dictionary mapping document IDs to their full document objects
+        # mapping document IDs to their full document objects
         self.docmap = dict()
-
+        # nested mapping: {doc_id: {token: frequency}}
         self.term_frequencies = defaultdict(Counter)
 
-    # Tokenize the input text, then add each token to the index with the document ID
     def  __add_document(self, doc_id, text):
+        """Internal method to tokenize text and update the index and term frequencies for a document."""
         tokenizedText = tokenizeStrings(text)
         for token in tokenizedText:
             if token not in self.index:
@@ -113,6 +140,7 @@ class InvertedIndex:
             self.term_frequencies[doc_id][token] += 1
 
     def get_documents(self, term):
+        """Returns a sorted list of unique document IDs that contain any tokens from the search term."""
         result_set = set()
         for token in tokenizeStrings(term):
             print(f"token: {token}")
@@ -121,6 +149,7 @@ class InvertedIndex:
         return sorted(list(result_set))
 
     def get_tf(self, doc_id, term):
+        """Retrieves the frequency of a specific term within a given document ID."""
         tokens = tokenizeStrings(term)
         if not tokens:
             return 0
@@ -128,6 +157,7 @@ class InvertedIndex:
         return self.term_frequencies.get(doc_id, {}).get(token, 0)
 
     def build(self):
+        """Loads movies from the JSON file and builds the complete inverted index and docmap."""
         with open('./data/movies.json', 'r') as f:
             data = json.load(f)
             movies = data["movies"]
@@ -140,6 +170,7 @@ class InvertedIndex:
         self.save()
 
     def save(self):
+        """Pickles and saves the index, docmap, and term frequencies to the cache directory."""
         os.makedirs("cache", exist_ok=True)
         with open("cache/index.pkl", "wb") as f:
             pickle.dump(self.index, f)
@@ -149,6 +180,7 @@ class InvertedIndex:
             pickle.dump(self.term_frequencies, f)
             
     def load(self):
+        """Loads the pickled index, docmap, and term frequencies from the cache directory."""
         try:
             with open("cache/index.pkl", "rb") as f:
                 self.index = pickle.load(f)
