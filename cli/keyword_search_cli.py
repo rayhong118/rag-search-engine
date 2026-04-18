@@ -1,6 +1,10 @@
 import argparse
-import sys
 import os
+import sys
+
+# Add the project root to sys.path to allow importing from 'modules'
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import json
 import string
 import io
@@ -8,6 +12,8 @@ from nltk.stem import PorterStemmer
 import pickle
 from collections import defaultdict, Counter
 import math
+from modules.bm25 import BM25_K1
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")
@@ -28,6 +34,17 @@ def main() -> None:
     tfidf_parser = subparsers.add_parser('tfidf')
     tfidf_parser.add_argument("doc_id", type=int)
     tfidf_parser.add_argument("term", type=str)
+
+    bm25_idf_parser = subparsers.add_parser("bm25idf", help="Get BM25 IDF score for a given term")
+    bm25_idf_parser.add_argument("term", type=str, help="Term to get BM25 IDF score for")
+
+
+    bm25_tf_parser = subparsers.add_parser(
+    "bm25tf", help="Get BM25 TF score for a given document ID and term"
+    )
+    bm25_tf_parser.add_argument("doc_id", type=int, help="Document ID")
+    bm25_tf_parser.add_argument("term", type=str, help="Term to get BM25 TF score for")
+    bm25_tf_parser.add_argument("k1", type=float, nargs='?', default=BM25_K1, help="Tunable BM25 K1 parameter")
 
     args = parser.parse_args()
 
@@ -66,7 +83,16 @@ def main() -> None:
             tf_idf = tf * idf
             print(f"TF-IDF score of '{args.term}' in document '{args.doc_id}': {tf_idf:.2f}")
             pass
-
+        case "bm25idf":
+            try:
+                bm25idf = bm25_idf_command(args.term)
+            except Exception as e:
+                print(e)
+            print(f"BM25 IDF score of '{args.term}': {bm25idf:.2f}")
+            pass
+        case "bm25tf":
+            bm25tf = bm25_tf_command(args.doc_id, args.term, args.k1)
+            print(f"BM25 TF score of '{args.term}' in document '{args.doc_id}': {bm25tf:.2f}")
         case _:
             parser.print_help()
 
@@ -86,7 +112,7 @@ def keywordSearch(query, index):
 # stemming
 # remove punctuation
 # convert into tokens
-def tokenizeStrings (input):
+def tokenizeStrings (input:str) -> list[str]:
     result = []
 
     # stopwords
@@ -117,6 +143,19 @@ def calculateIDF(doc_ids, docmap):
     term_match_doc_count = len(doc_ids)
     print(f'total_doc_count: {total_doc_count}, term_match_doc_count: {term_match_doc_count}')
     return math.log((total_doc_count + 1) / (term_match_doc_count + 1))
+
+def bm25_idf_command(term: str) -> float:
+    invertedIndex = InvertedIndex()
+    invertedIndex.load()
+    bm25_idf = invertedIndex.get_bm25_idf(term)
+    return bm25_idf
+
+def bm25_tf_command(doc_id: int, term: str, k1: float):
+    invertedIndex = InvertedIndex()
+    invertedIndex.load()
+    bm25_tf = invertedIndex.get_bm25_tf(doc_id, term, k1=k1)
+    return bm25_tf
+
     
 class InvertedIndex:
     def __init__(self):
@@ -139,7 +178,7 @@ class InvertedIndex:
             
             self.term_frequencies[doc_id][token] += 1
 
-    def get_documents(self, term):
+    def get_documents(self, term) -> list[int]:
         """Returns a sorted list of unique document IDs that contain any tokens from the search term."""
         result_set = set()
         for token in tokenizeStrings(term):
@@ -190,6 +229,21 @@ class InvertedIndex:
                 self.term_frequencies = pickle.load(f)
         except FileNotFoundError:
             raise Exception("Search index not found. Please run the 'build' command first.")
+
+    def get_bm25_idf(self, term: str) -> float:
+        tokens = tokenizeStrings(term)
+        if len(tokens) != 1:
+            raise Exception("invalid term")
+
+        N = len(self.docmap)
+        df = len(self.get_documents(term))
+        bm25_idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+        return bm25_idf
+    
+    def get_bm25_tf(self, doc_id, term, k1=BM25_K1):
+        tf = self.get_tf(doc_id, term)
+        saturated_tf_score = (tf * (k1 + 1)) / (tf + k1)
+        return saturated_tf_score
 
 if __name__ == "__main__":
     main()
