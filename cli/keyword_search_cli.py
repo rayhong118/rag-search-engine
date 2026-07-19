@@ -12,7 +12,7 @@ from nltk.stem import PorterStemmer
 import pickle
 from collections import defaultdict, Counter
 import math
-from modules.bm25 import BM25_K1
+from modules.bm25 import BM25_K1, BM25_B
 
 
 def main() -> None:
@@ -45,6 +45,11 @@ def main() -> None:
     bm25_tf_parser.add_argument("doc_id", type=int, help="Document ID")
     bm25_tf_parser.add_argument("term", type=str, help="Term to get BM25 TF score for")
     bm25_tf_parser.add_argument("k1", type=float, nargs='?', default=BM25_K1, help="Tunable BM25 K1 parameter")
+    bm25_tf_parser.add_argument("b", type=float, nargs='?', default=BM25_B, help="Tunable BM25 b parameter")
+
+    bm25search_parser = subparsers.add_parser("bm25search", help="Search movies using full BM25 scoring")
+    bm25search_parser.add_argument("query", type=str, help="Search query")
+    bm25search_parser.add_argument("limit", type=int, nargs='?', default=5, help="Output limit")
 
     args = parser.parse_args()
 
@@ -91,8 +96,15 @@ def main() -> None:
             print(f"BM25 IDF score of '{args.term}': {bm25idf:.2f}")
             pass
         case "bm25tf":
-            bm25tf = bm25_tf_command(args.doc_id, args.term, args.k1)
+            bm25tf = bm25_tf_command(args.doc_id, args.term, args.k1, args.b)
             print(f"BM25 TF score of '{args.term}' in document '{args.doc_id}': {bm25tf:.2f}")
+            pass
+        case "bm25search":
+            invertedIndex.load()
+            results = invertedIndex.bm25_search(args.query, args.limit)
+            for result in results:
+                score, doc_id, title = result
+                print(f'({doc_id}) {title} - Score: {score:.2f}')
         case _:
             parser.print_help()
 
@@ -150,10 +162,10 @@ def bm25_idf_command(term: str) -> float:
     bm25_idf = invertedIndex.get_bm25_idf(term)
     return bm25_idf
 
-def bm25_tf_command(doc_id: int, term: str, k1: float):
+def bm25_tf_command(doc_id: int, term: str, k1: float, b: float):
     invertedIndex = InvertedIndex()
     invertedIndex.load()
-    bm25_tf = invertedIndex.get_bm25_tf(doc_id, term, k1=k1)
+    bm25_tf = invertedIndex.get_bm25_tf(doc_id, term, k1=k1, b=b)
     return bm25_tf
 
     
@@ -166,6 +178,10 @@ class InvertedIndex:
         self.docmap = dict()
         # nested mapping: {doc_id: {token: frequency}}
         self.term_frequencies = defaultdict(Counter)
+        # Document length
+        self.doc_lengths = dict()
+        # average doc length
+        self.avg_doc_length = 0.0
 
     def  __add_document(self, doc_id, text):
         """Internal method to tokenize text and update the index and term frequencies for a document."""
@@ -177,12 +193,23 @@ class InvertedIndex:
                 self.index[token].add(doc_id)
             
             self.term_frequencies[doc_id][token] += 1
+        
+        length = len(tokenizedText)
+        self.doc_lengths[doc_id] = length
+
+    def __get_avg_doc_length(self) -> float:
+        doc_count = len(self.docmap)
+        if doc_count == 0:
+            return 0.0
+        total_words = 0
+        for doc_length in self.doc_lengths.values():
+            total_words += doc_length
+        return total_words/doc_count
 
     def get_documents(self, term) -> list[int]:
         """Returns a sorted list of unique document IDs that contain any tokens from the search term."""
         result_set = set()
         for token in tokenizeStrings(term):
-            print(f"token: {token}")
             doc_ids = self.index.get(token, set())
             result_set.update(doc_ids)
         return sorted(list(result_set))
@@ -217,6 +244,8 @@ class InvertedIndex:
             pickle.dump(self.docmap, f)
         with open("cache/term_frequencies.pkl", "wb") as f:
             pickle.dump(self.term_frequencies, f)
+        with open("cache/doc_lengths.pkl", "wb") as f:
+            pickle.dump(self.doc_lengths, f)
             
     def load(self):
         """Loads the pickled index, docmap, and term frequencies from the cache directory."""
@@ -227,6 +256,10 @@ class InvertedIndex:
                 self.docmap = pickle.load(f)
             with open("cache/term_frequencies.pkl", "rb") as f:
                 self.term_frequencies = pickle.load(f)
+            with open("cache/doc_lengths.pkl", "rb") as f:
+                self.doc_lengths = pickle.load(f)
+            
+            self.avg_doc_length = self.__get_avg_doc_length()
         except FileNotFoundError:
             raise Exception("Search index not found. Please run the 'build' command first.")
 
@@ -240,10 +273,41 @@ class InvertedIndex:
         bm25_idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
         return bm25_idf
     
-    def get_bm25_tf(self, doc_id, term, k1=BM25_K1):
+    def get_bm25_tf(self, doc_id, term, k1=BM25_K1, b=BM25_B):
+        doc_length = self.doc_lengths[doc_id]
+        avg_doc_length = self.avg_doc_length
+        # Length normalization factor
+        length_norm = 1 - b + b * (doc_length / avg_doc_length)
+
         tf = self.get_tf(doc_id, term)
-        saturated_tf_score = (tf * (k1 + 1)) / (tf + k1)
+        
+        # Apply to term frequency
+        saturated_tf_score =  (tf * (k1 + 1)) / (tf + k1 * length_norm)
+
         return saturated_tf_score
+    
+    def bm25(self, doc_id, term):
+        bm25_tf = self.get_bm25_tf(doc_id, term)
+        bm25_idf = self.get_bm25_idf(term)
+        return bm25_tf * bm25_idf
+
+    def bm25_search(self, query, limit):
+        tokenized_query = tokenizeStrings(query)
+        scores_dict = defaultdict(float)
+        
+        for token in tokenized_query:
+            doc_ids = self.index.get(token, set())
+            bm25_idf = self.get_bm25_idf(token)
+            for doc_id in doc_ids:
+                bm25_tf = self.get_bm25_tf(doc_id, token)
+                scores_dict[doc_id] += bm25_tf * bm25_idf
+        
+        sorted_list = sorted(scores_dict.items(), key=lambda item: item[1], reverse=True)[:limit]
+
+        result = []
+        for doc_id, score in sorted_list:
+            result.append([score, doc_id, self.docmap[doc_id]["title"]])
+        return result
 
 if __name__ == "__main__":
     main()
