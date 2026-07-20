@@ -10,7 +10,7 @@ class SemanticSearch:
         pass
 
 
-async def verify_model():
+def verify_model():
     print("Verifying model...")
     
     search_instance = SemanticSearch()
