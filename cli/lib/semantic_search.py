@@ -12,11 +12,8 @@ class SemanticSearch:
         self.model = SentenceTransformer('all-MiniLM-L6-v2')
 
         self.embeddings: np.ndarray | None = None
-        self.documents: list[str] | None = None
+        self.documents: list[dict[str, str]] | None = None
         self.document_map= dict()
-    
-    def search(self, query: str) -> list[tuple[str, float]]:
-        pass
 
     def generate_embedding(self, text: str):
         if len(text) == 0 or text.strip() == "":
@@ -60,6 +57,39 @@ class SemanticSearch:
         
         return self.embeddings
 
+    def search(self, query, limit):
+        if self.embeddings is None:
+            raise ValueError("No embeddings loaded. Call `load_or_create_embeddings` first.")
+
+        embedded_query = self.generate_embedding(query)
+        similarity_scores = []
+
+        # Zip documents and embeddings to access both in the loop
+        for document, embedding in zip(self.documents, self.embeddings):
+            score = cosine_similarity(embedded_query, embedding)
+            # Append a single tuple (score, document) to the list
+            similarity_scores.append((score, document))
+        # Sort the scores in descending order (highest similarity first)
+        similarity_scores.sort(key=lambda x: x[0], reverse=True)
+
+        results = [
+            {
+                "score": score,
+                "title": document["title"],
+                "description": document["description"]
+            }
+            for score, document in similarity_scores[:limit]
+        ]
+
+
+        
+        # Return the top limited results
+        return results
+            
+
+        
+
+
 def verify_model():
     print("Verifying model...")
     
@@ -88,3 +118,14 @@ def embed_query_text(query):
     print(f"Query: {query}")
     print(f"First 3 dimensions: {query_embedding[:3]}")
     print(f"Shape: {query_embedding.shape}")
+
+
+def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+    dot_product = np.dot(vec1, vec2)
+    norm1 = np.linalg.norm(vec1)
+    norm2 = np.linalg.norm(vec2)
+
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+
+    return dot_product / (norm1 * norm2)
