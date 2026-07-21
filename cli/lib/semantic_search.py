@@ -58,7 +58,7 @@ class SemanticSearch:
         else:
             self.build_embedding(documents)
         
-        
+        return self.embeddings
 
 def verify_model():
     print("Verifying model...")
@@ -68,8 +68,8 @@ def verify_model():
     print(f'Max sequence length: {search_instance.model.max_seq_length}')
 
 def embed_text(text:str):
-    semantic_search = SemanticSearch()
-    embedding = semantic_search.generate_embedding(text)
+    search_instance = SemanticSearch()
+    embedding = search_instance.generate_embedding(text)
     print(f"Text: {text}")
     print(f"First 3 dimensions: {embedding[:3]}")
     print(f"Dimensions: {embedding.shape[0]}")
@@ -77,7 +77,14 @@ def embed_text(text:str):
 def verify_embeddings():
     search_instance = SemanticSearch()
     with open(MOVIES_JSON_PATH, 'r') as f:
-        movies_list = json.load(f)
+        movies_list = json.load(f)["movies"]
     embeddings = search_instance.load_or_create_embeddings(movies_list)
     print(f"Number of docs:   {len(movies_list)}")
     print(f"Embeddings shape: {embeddings.shape[0]} vectors in {embeddings.shape[1]} dimensions")
+
+def embed_query_text(query): 
+    search_instance = SemanticSearch()
+    query_embedding = search_instance.generate_embedding(query)
+    print(f"Query: {query}")
+    print(f"First 3 dimensions: {query_embedding[:3]}")
+    print(f"Shape: {query_embedding.shape}")
